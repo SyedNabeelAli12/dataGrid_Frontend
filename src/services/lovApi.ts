@@ -1,11 +1,10 @@
 import axios from "axios";
-
-const BASE_URL = "http://localhost:5000/api/lovs";
+import config from "../config";
 
 // Fetch ListOfValues with search and pagination
 export const fetchLOVs = async () => {
   try {
-    const res = await axios.get(`${BASE_URL}`,);
+    const res = await axios.get(config.lovs,);
     return res.data;
   } catch (error: any) {
     console.error("Error fetching Lovs:", error);

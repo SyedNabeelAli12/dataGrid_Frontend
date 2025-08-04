@@ -34,16 +34,7 @@ export interface InfoCardProps {
   items: { label: string; value: string | number }[];
 }
 
-export interface LOVData {
-  powertrains: LOVItem[];
-  bodyStyles: LOVItem[];
-  plugTypes: LOVItem[];
-}
 
-export interface LOVContextType {
-  lovs: LOVData | null;
-  loading: boolean;
-}
 
 
 export type Filter = {
@@ -53,7 +44,7 @@ export type Filter = {
 };
 
 export interface CarFilterProps {
+  filters: Filter[];
   onApplyFilters: (filters: Filter[]) => void;
-  columns: { field: string; headerName: string }[];
-  fields: { [key: string]: "string" | "number" };
+   metaData: any[];
 }

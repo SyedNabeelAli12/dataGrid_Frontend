@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { AgGridReact } from "ag-grid-react";
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
@@ -14,6 +14,7 @@ import CarFilter from "./CarFilter";
 import SearchBar from "./SearchBar";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import DeleteIcon from "@mui/icons-material/Delete";
+import { fetchLOVs } from "../services/lovApi";
 
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
 
@@ -21,68 +22,119 @@ export const DataGrid = () => {
   const { showSnackbar } = useSnackbar();
   const navigate = useNavigate();
 
+  const [lovs, setLovs] = useState<any>(null);
+  const [lovsLoading, setLovsLoading] = useState(true);
+
   const [rowData, setRowData] = useState<any[]>([]);
   const [columns, setColumns] = useState<ColDef[]>([]);
   const [fields, setFields] = useState({});
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [filters, setFilters] = useState<{ column: string; operator: string; value: string }[]>([]);
-  const [pagination, setPagination] = useState({
-    page: 1,
-    limit: 10,
-    total: 0,
-  });
+  const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0 });
   const [loading, setLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [carToDelete, setCarToDelete] = useState<number | null>(null);
 
-  // debounce search input
   useEffect(() => {
-    const handler = setTimeout(() => {
+    async function getLOVs() {
+      try {
+        const data = await fetchLOVs();
+        setLovs(data);
+      } catch {
+        showSnackbar("Failed to load LOVs", "error");
+      } finally {
+        setLovsLoading(false);
+      }
+    }
+    getLOVs();
+  }, [showSnackbar]);
+
+  const metaData = useMemo(() => {
+    if (!lovs?.table_columns) return [];
+    return lovs.table_columns
+      .filter((col: any) => col.datatype?.toLowerCase() !== "boolean")
+      .map((col: any) => ({
+        field: col.column_name,
+        headerName: col.name,
+        type:
+          ["int", "decimal", "number"].some((numType) =>
+            col.datatype?.toLowerCase().includes(numType)
+          )
+            ? "number"
+            : "string",
+      }));
+  }, [lovs?.table_columns]);
+
+  const createColumns = useCallback(() => {
+    if (!lovs?.table_columns) return;
+
+    const cols: ColDef[] = lovs.table_columns.map((col: any) => ({
+      field: col.column_name,
+      headerName: col.name,
+      sortable: true,
+      resizable: true,
+      flex: 1,
+      minWidth: 120,
+      cellStyle: { textAlign: "center" },
+      valueFormatter: (params: any) => {
+        const val = params.value;
+        if (col.datatype === "Boolean") {
+          return val ? "Yes" : "No";
+        }
+        if (col.datatype === "Date" && val) {
+          try {
+            return new Date(val).toISOString().split("T")[0];
+          } catch {
+            return val;
+          }
+        }
+        return val ?? "Unknown";
+      },
+    }));
+
+    cols.push({
+      headerName: "Actions",
+      field: "actions",
+      cellRenderer: (params: any) => (
+        <Box display="flex" gap={1}>
+          <IconButton
+            size="small"
+            onClick={() => navigate(`/view/${params.data.id}`, { state: { lovs } })}
+          >
+            <VisibilityIcon />
+          </IconButton>
+          <IconButton
+            size="small"
+            color="error"
+            onClick={() => {
+              setCarToDelete(params.data.id);
+              setConfirmOpen(true);
+            }}
+          >
+            <DeleteIcon />
+          </IconButton>
+        </Box>
+      ),
+      minWidth: 120,
+      pinned: "right",
+    });
+
+    setColumns(cols);
+  }, [lovs, navigate]);
+
+  useEffect(() => {
+    if (!lovsLoading) createColumns();
+  }, [lovsLoading, createColumns]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
       setDebouncedSearch(search);
-      setPagination((prev) => ({ ...prev, page: 1 }));
+      setPagination((p) => ({ ...p, page: 1 }));
     }, 500);
-    return () => clearTimeout(handler);
+    return () => clearTimeout(timeout);
   }, [search]);
 
-  //dynamic columns
-  const createColumns = useCallback(
-    (sampleData: any[]) => {
-      if (!sampleData.length) return;
-
-      const baseColumns: ColDef[] = Object.keys(sampleData[0])
-        .filter((key) => key !== "id")
-        .map((key) => ({
-          field: key,
-          headerName: key.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase()),
-        }));
-
-  //actions addition
-      baseColumns.push({
-        headerName: "Actions",
-        field: "actions",
-        cellRenderer: (params: any) => (
-          <Box display="flex" gap={1}>
-            <IconButton size="small" onClick={() => navigate(`/view/${params.data.id}`)}>
-              <VisibilityIcon />
-            </IconButton>
-            <IconButton
-              size="small"
-              color="error"
-              onClick={() => handleDeleteClick(params.data.id)}
-            >
-              <DeleteIcon />
-            </IconButton>
-          </Box>
-        ),
-      });
-
-      setColumns(baseColumns);
-    },
-    [navigate]
-  );
-
-  //fetch or filter cars
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
@@ -90,33 +142,19 @@ export const DataGrid = () => {
         ? await filterCars(filters, pagination.page, pagination.limit)
         : await fetchCars(debouncedSearch, pagination.page, pagination.limit);
 
-      const data = res.data || [];
-      setRowData(data);
+      setRowData(res.data || []);
       setFields(res.fields || {});
-      createColumns(data);
-
-      setPagination((prev) => ({
-        ...prev,
-        total: res.pagination?.total || 0,
-      }));
-    } catch (err) {
-      console.error(err);
+      setPagination((p) => ({ ...p, total: res.pagination?.total || 0 }));
+    } catch {
       showSnackbar("Failed to fetch cars", "error");
     } finally {
       setLoading(false);
     }
-  }, [filters, pagination.page, pagination.limit, debouncedSearch, createColumns, showSnackbar]);
+  }, [filters, pagination.page, pagination.limit, debouncedSearch, showSnackbar]);
 
-  // reload data when filters, search, or page changes
   useEffect(() => {
     loadData();
   }, [loadData]);
-
-  // Handle delete confirmation
-  const handleDeleteClick = (id: number) => {
-    setCarToDelete(id);
-    setConfirmOpen(true);
-  };
 
   const confirmDelete = async () => {
     if (!carToDelete) return;
@@ -124,8 +162,7 @@ export const DataGrid = () => {
       await softDeleteCar(carToDelete);
       showSnackbar("Car deleted successfully", "success");
       loadData();
-    } catch (err) {
-      console.error(err);
+    } catch {
       showSnackbar("Failed to delete car", "error");
     } finally {
       setConfirmOpen(false);
@@ -135,62 +172,51 @@ export const DataGrid = () => {
 
   const totalPages = Math.ceil(pagination.total / pagination.limit);
 
+  if (lovsLoading || loading) return <Loader />;
+
   return (
-    <Box sx={{ padding: 2 }}>
+    <Box sx={{ p: 2 }}>
       <SearchBar value={search} onChange={setSearch} />
 
       <CarFilter
-        fields={fields}
+        filters={filters}
         onApplyFilters={(f) => {
           setFilters(f);
-          setPagination((prev) => ({ ...prev, page: 1 }));
+          setPagination((p) => ({ ...p, page: 1 }));
         }}
-        columns={columns
-          .filter((col) => typeof col.field === "string" && col.field !== "actions")
-          .map((col) => ({
-            field: col.field as string,
-            headerName: col.headerName || col.field!,
-          }))}
+        metaData={metaData}
       />
 
-      {loading ? (
-        <Loader />
-      ) : (
-        <>
-          <Box sx={{ width: "100%", overflowX: "auto" }}>
-            <div className="ag-theme-alpine" style={{ width: "100%" }}>
-              <AgGridReact
-                rowData={rowData}
-                columnDefs={columns}
-                pagination={false}
-                domLayout="autoHeight"
-                modules={[ClientSideRowModelModule]}
-                rowHeight={40}
-                headerHeight={50}
-                defaultColDef={{
-                  resizable: true,
-                  sortable: true,
-                  flex: 1,
-                  minWidth: 120,
-                  cellStyle: { 'text-align': 'center' },
-                  headerClass: "ag-center-header",
-                }}
-              />
-            </div>
-          </Box>
+      <Box sx={{ width: "100%", overflowX: "auto" }}>
+        <div className="ag-theme-alpine" style={{ width: "100%" }}>
+          <AgGridReact
+            rowData={rowData}
+            columnDefs={columns}
+            pagination={false}
+            domLayout="autoHeight"
+            modules={[ClientSideRowModelModule]}
+            rowHeight={40}
+            headerHeight={50}
+            defaultColDef={{
+              resizable: true,
+              sortable: true,
+              flex: 1,
+              minWidth: 120,
+              cellStyle: { textAlign: "center" },
+              headerClass: "ag-center-header",
+            }}
+          />
+        </div>
+      </Box>
 
-          <Box display="flex" justifyContent="center" mt={2}>
-            <Pagination
-              count={totalPages}
-              page={pagination.page}
-              onChange={(_, newPage) =>
-                setPagination((prev) => ({ ...prev, page: newPage }))
-              }
-              size="small"
-            />
-          </Box>
-        </>
-      )}
+      <Box display="flex" justifyContent="center" mt={2}>
+        <Pagination
+          count={totalPages}
+          page={pagination.page}
+          onChange={(_, page) => setPagination((p) => ({ ...p, page }))}
+          size="small"
+        />
+      </Box>
 
       <ConfirmDialog
         open={confirmOpen}

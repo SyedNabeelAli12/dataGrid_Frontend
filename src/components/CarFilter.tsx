@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Box,
   MenuItem,
@@ -8,7 +8,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useSnackbar } from "./snackbar";
-import { CarFilterProps,Filter } from './../types/types';
+import { CarFilterProps, Filter } from "./../types/types";
 
 const STRING_OPERATORS = [
   "contains",
@@ -20,10 +20,25 @@ const STRING_OPERATORS = [
 
 const NUMBER_OPERATORS = ["equals", "greater than", "less than", "is empty"];
 
+const CarFilter: React.FC<CarFilterProps> = ({ filters: propFilters, onApplyFilters, metaData }) => {
+  // Use filters from props, but keep local copy for editing
+  const [filters, setFilters] = useState<Filter[]>(propFilters || []);
+  const columns = useMemo(() => metaData, [metaData]);
+  const fields = useMemo(() => {
+    const result: Record<string, string> = {};
+    metaData.forEach((col) => {
+      result[col.field] = col.type;
+    });
+    return result;
+  }, [metaData]);
 
 
-const CarFilter: React.FC<CarFilterProps> = ({ onApplyFilters, columns, fields }) => {
-  const [filters, setFilters] = useState<Filter[]>([]);
+   useEffect(() => {
+    setFilters(propFilters || []);
+  }, [propFilters]);
+  
+
+  // const [filters, setFilters] = useState<Filter[]>([]);
   const { showSnackbar } = useSnackbar();
 
   const [currentFilter, setCurrentFilter] = useState<Filter>({
@@ -35,7 +50,6 @@ const CarFilter: React.FC<CarFilterProps> = ({ onApplyFilters, columns, fields }
   const fieldType = fields[currentFilter.column] || "string";
   const operators = fieldType === "number" ? NUMBER_OPERATORS : STRING_OPERATORS;
 
-  // Reset current filter
   useEffect(() => {
     if (!columns.some((c) => c.field === currentFilter.column)) {
       setCurrentFilter({
@@ -52,16 +66,10 @@ const CarFilter: React.FC<CarFilterProps> = ({ onApplyFilters, columns, fields }
     }
   }, [columns, currentFilter.column, currentFilter.operator, operators]);
 
-  // input changes for current filter
   const handleChange = (field: keyof Filter, value: string) => {
-    // If operator changes to "equals", clear all other filters on the column
-    if (field === "operator" && value === "equals") {
-      setFilters((prev) => prev.filter((f) => f.column !== currentFilter.column));
-    }
     setCurrentFilter((prev) => ({ ...prev, [field]: value }));
   };
 
-  // Normalize filters before applying (clear values for "is empty" operator)
   const normalizeFilters = (filters: Filter[]) =>
     filters.map((f) => ({
       ...f,
@@ -69,37 +77,90 @@ const CarFilter: React.FC<CarFilterProps> = ({ onApplyFilters, columns, fields }
     }));
 
   const handleAddFilter = () => {
-    // Don't allow adding if an equals filter exists for the same column
-    if (filters.some((f) => f.column === currentFilter.column && f.operator === "equals")) {
+    const colFilters = filters.filter((f) => f.column === currentFilter.column);
+
+    if (
+      (currentFilter.operator === "is empty" &&
+        colFilters.some((f) => f.operator === "equals")) ||
+      (currentFilter.operator === "equals" &&
+        colFilters.some((f) => f.operator === "is empty"))
+    ) {
       showSnackbar(
-        `An "equals" filter already exists for "${currentFilter.column}". Remove it first.`,
-        "info"
+        `"${currentFilter.operator}" cannot be added because an "${
+          currentFilter.operator === "is empty" ? "equals" : "is empty"
+        }" filter already exists for "${currentFilter.column}". Remove it first.`,
+        "error"
       );
       return;
     }
 
-    // Prevent adding empty values except for "is empty"
+    const isAddingEqualsOrEmpty =
+      currentFilter.operator === "equals" || currentFilter.operator === "is empty";
+    const hasEqualsOrEmpty = colFilters.some(
+      (f) => f.operator === "equals" || f.operator === "is empty"
+    );
+    const hasOtherStringOps = colFilters.some((f) =>
+      ["contains", "starts with", "ends with", "greater than", "less than"].includes(f.operator)
+    );
+
+    if (isAddingEqualsOrEmpty && hasOtherStringOps) {
+      showSnackbar(
+        `Cannot add "${currentFilter.operator}" filter because other filters like "contains", "starts with", or "ends with" exist for "${currentFilter.column}". Remove them first.`,
+        "error"
+      );
+      return;
+    }
+
+    if (!isAddingEqualsOrEmpty && hasEqualsOrEmpty) {
+      showSnackbar(
+        `Cannot add "${currentFilter.operator}" filter because an "equals" or "is empty" filter already exists for "${currentFilter.column}". Remove it first.`,
+        "error"
+      );
+      return;
+    }
+
+    if (
+      filters.some(
+        (f) =>
+          f.column === currentFilter.column && f.operator === currentFilter.operator
+      )
+    ) {
+      return;
+    }
+
     if (currentFilter.operator !== "is empty" && !currentFilter.value.trim()) {
       return;
     }
 
-    // Prevent duplicate operator filters on the same column
-    if (filters.some((f) => f.column === currentFilter.column && f.operator === currentFilter.operator)) {
-      return;
-    }
-
-    // Number validations for "less than" and "greater than"
     if (fieldType === "number") {
       const val = parseFloat(currentFilter.value);
-      const gtFilter = filters.find((f) => f.column === currentFilter.column && f.operator === "greater than");
-      const ltFilter = filters.find((f) => f.column === currentFilter.column && f.operator === "less than");
+      const gtFilter = filters.find(
+        (f) => f.column === currentFilter.column && f.operator === "greater than"
+      );
+      const ltFilter = filters.find(
+        (f) => f.column === currentFilter.column && f.operator === "less than"
+      );
 
-      if (currentFilter.operator === "less than" && gtFilter && val <= parseFloat(gtFilter.value)) {
-        showSnackbar(`"Less than" must be greater than the "greater than" value (${gtFilter.value})`, "error");
+      if (
+        currentFilter.operator === "less than" &&
+        gtFilter &&
+        val <= parseFloat(gtFilter.value)
+      ) {
+        showSnackbar(
+          `"Less than" must be greater than the "greater than" value (${gtFilter.value})`,
+          "error"
+        );
         return;
       }
-      if (currentFilter.operator === "greater than" && ltFilter && val >= parseFloat(ltFilter.value)) {
-        showSnackbar(`"Greater than" must be less than the "less than" value (${ltFilter.value})`, "error");
+      if (
+        currentFilter.operator === "greater than" &&
+        ltFilter &&
+        val >= parseFloat(ltFilter.value)
+      ) {
+        showSnackbar(
+          `"Greater than" must be less than the "less than" value (${ltFilter.value})`,
+          "error"
+        );
         return;
       }
     }
@@ -115,12 +176,13 @@ const CarFilter: React.FC<CarFilterProps> = ({ onApplyFilters, columns, fields }
   const handleDeleteFilter = (index: number) => {
     const updated = filters.filter((_, i) => i !== index);
     setFilters(updated);
-    onApplyFilters(normalizeFilters(updated));
   };
 
-  const handleApply = () => {
-    onApplyFilters(normalizeFilters(filters));
-  };
+ const handleApply = () => {
+  const normalized = normalizeFilters(filters);
+  setFilters(normalized); // retain normalized filters locally
+  onApplyFilters(normalized);
+};
 
   return (
     <>
@@ -199,7 +261,6 @@ const CarFilter: React.FC<CarFilterProps> = ({ onApplyFilters, columns, fields }
         <Button
           variant="contained"
           onClick={handleApply}
-          disabled={filters.length === 0}
           sx={{
             backgroundColor: "black",
             color: "white",
@@ -219,9 +280,9 @@ const CarFilter: React.FC<CarFilterProps> = ({ onApplyFilters, columns, fields }
           filters.map((f, i) => (
             <Chip
               key={i}
-              label={`${columns.find((c) => c.field === f.column)?.headerName || f.column} ${f.operator}${
-                f.operator !== "is empty" ? ` "${f.value}"` : ""
-              }`}
+              label={`${columns.find((c) => c.field === f.column)?.headerName || f.column} ${
+                f.operator
+              }${f.operator !== "is empty" ? ` "${f.value}"` : ""}`}
               onDelete={() => handleDeleteFilter(i)}
               size="small"
               variant="outlined"

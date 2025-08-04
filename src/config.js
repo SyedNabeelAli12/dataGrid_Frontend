@@ -9,7 +9,7 @@ const config = {
  fetchCarById:`${process.env.REACT_APP_API_URL}${apiActions.carsApi}/view`,
  fetchCarByFilter:`${process.env.REACT_APP_API_URL}${apiActions.carsApi}/filter`,
  deleteCarById:`${process.env.REACT_APP_API_URL}${apiActions.carsApi}/soft-delete`,
- tokenValidate:`${process.env.REACT_APP_API_URL}${apiActions.lovApi}/`,
+ lovs:`${process.env.REACT_APP_API_URL}${apiActions.lovApi}/`,
 }
 
 

@@ -1,12 +1,20 @@
-// components/Notifier.tsx
-import React, { createContext, useContext, useState, ReactNode } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  ReactNode,
+  useCallback,
+  useMemo,
+} from "react";
 import { Snackbar, Alert, AlertColor } from "@mui/material";
 
 interface SnackbarContextProps {
   showSnackbar: (message: string, severity?: AlertColor) => void;
 }
 
-const SnackbarContext = createContext<SnackbarContextProps | undefined>(undefined);
+const SnackbarContext = createContext<SnackbarContextProps | undefined>(
+  undefined
+);
 
 export const useSnackbar = () => {
   const context = useContext(SnackbarContext);
@@ -15,24 +23,25 @@ export const useSnackbar = () => {
   }
   return context;
 };
-
 export const SnackbarProvider = ({ children }: { children: ReactNode }) => {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [severity, setSeverity] = useState<AlertColor>("info");
 
-  const showSnackbar = (msg: string, sev: AlertColor = "info") => {
+  const showSnackbar = useCallback((msg: string, sev: AlertColor = "info") => {
     setMessage(msg);
     setSeverity(sev);
     setOpen(true);
-  };
+  }, []);
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     setOpen(false);
-  };
+  }, []);
+
+  const contextValue = useMemo(() => ({ showSnackbar }), [showSnackbar]);
 
   return (
-    <SnackbarContext.Provider value={{ showSnackbar }}>
+    <SnackbarContext.Provider value={contextValue}>
       {children}
       <Snackbar
         open={open}
